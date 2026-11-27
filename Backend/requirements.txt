@@ -1,0 +1,5 @@
+# Install inside a Radioconda environment (which provides gnuradio, numpy, pyzmq)
+numpy>=2.0.0
+pyzmq>=26.0.0
+torch>=2.5.0
+rich>=13.0.0
