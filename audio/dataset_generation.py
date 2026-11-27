@@ -1,154 +1,92 @@
 
+import os
 import numpy as np
 import pandas as pd
 import librosa
-
-from pathlib import Path
 from scipy.io.wavfile import write
 
-# Settings
-SAMPLE_RATE = 22050
+# Dataset folders
+normal_folder = "data/raw/simulated/normal"
+anomaly_folder = "data/raw/simulated/anomalous"
+
+os.makedirs(normal_folder, exist_ok=True)
+os.makedirs(anomaly_folder, exist_ok=True)
+
+SAMPLE_RATE = 44100
 DURATION = 5
-TOTAL_SAMPLES = 50
+SAMPLES = SAMPLE_RATE * DURATION
 
-# Create folders
-normal_folder = Path("data/raw/simulated/normal")
-anomaly_folder = Path("data/raw/simulated/anomalous")
+dataset = []
 
-normal_folder.mkdir(parents=True, exist_ok=True)
-anomaly_folder.mkdir(parents=True, exist_ok=True)
-
-
-# Generate normal audio
-def generate_normal_audio():
-
-    t = np.linspace(
-        0, DURATION,
-        SAMPLE_RATE * DURATION,
-        endpoint=False
-    )
-
-    # Background noise + ordinary low-frequency hum
-    noise = np.random.normal(0, 0.03, len(t))
-    hum = 0.15 * np.sin(2 * np.pi * 120 * t)
-
-    audio = noise + hum
-
-    return audio
-
-
-# Generate simulated anomalous audio
-def generate_anomalous_audio():
-
-    t = np.linspace(
-        0, DURATION,
-        SAMPLE_RATE * DURATION,
-        endpoint=False
-    )
-
-    # High-frequency carrier
-    carrier = np.sin(2 * np.pi * 2500 * t)
-
-    # Repeated on/off pulses
-    pulse_rate = 10
-    pulses = (np.sin(2 * np.pi * pulse_rate * t) > 0).astype(float)
-
-    noise = np.random.normal(0, 0.02, len(t))
-
-    audio = 0.6 * carrier * pulses + noise
-
-    return audio
-
-
-# Extract audio features
 def extract_features(audio):
-
-    rms = librosa.feature.rms(y=audio)[0]
-    zcr = librosa.feature.zero_crossing_rate(y=audio)[0]
-
-    centroid = librosa.feature.spectral_centroid(
+    rms = np.mean(librosa.feature.rms(y=audio))
+    zcr = np.mean(librosa.feature.zero_crossing_rate(y=audio))
+    centroid = np.mean(librosa.feature.spectral_centroid(
         y=audio, sr=SAMPLE_RATE
-    )[0]
-
-    bandwidth = librosa.feature.spectral_bandwidth(
+    ))
+    bandwidth = np.mean(librosa.feature.spectral_bandwidth(
         y=audio, sr=SAMPLE_RATE
-    )[0]
-
-    rolloff = librosa.feature.spectral_rolloff(
+    ))
+    rolloff = np.mean(librosa.feature.spectral_rolloff(
         y=audio, sr=SAMPLE_RATE
-    )[0]
+    ))
 
     mfcc = librosa.feature.mfcc(
-        y=audio,
-        sr=SAMPLE_RATE,
-        n_mfcc=13
+        y=audio, sr=SAMPLE_RATE, n_mfcc=13
     )
+    mfcc_values = np.mean(mfcc, axis=1)
 
     features = {
-        "RMS": np.mean(rms),
-        "Zero_Crossing_Rate": np.mean(zcr),
-        "Spectral_Centroid": np.mean(centroid),
-        "Spectral_Bandwidth": np.mean(bandwidth),
-        "Spectral_Rolloff": np.mean(rolloff)
+        "RMS": rms,
+        "ZCR": zcr,
+        "Centroid": centroid,
+        "Bandwidth": bandwidth,
+        "Rolloff": rolloff
     }
 
-    for i in range(13):
-        features[f"MFCC_{i+1}"] = np.mean(mfcc[i])
+    for i, value in enumerate(mfcc_values):
+        features[f"MFCC_{i+1}"] = value
 
     return features
 
 
-# Store dataset rows
-dataset = []
+# Generate 50 normal and 50 simulated anomaly samples
+for i in range(50):
 
-print("Generating normal audio samples...")
-
-for i in range(TOTAL_SAMPLES):
-
-    audio = generate_normal_audio()
-
-    filename = normal_folder / f"normal_{i+1}.wav"
-
-    audio_int16 = np.int16(
-        np.clip(audio, -1, 1) * 32767
+    # Normal audio: low-level noise and hum
+    t = np.arange(SAMPLES) / SAMPLE_RATE
+    normal = (
+        0.02 * np.sin(2 * np.pi * 120 * t)
+        + 0.01 * np.random.randn(SAMPLES)
     )
 
-    write(filename, SAMPLE_RATE, audio_int16)
-
-    features = extract_features(audio)
-    features["label"] = "normal"
-
-    dataset.append(features)
-
-
-print("Generating anomalous audio samples...")
-
-for i in range(TOTAL_SAMPLES):
-
-    audio = generate_anomalous_audio()
-
-    filename = anomaly_folder / f"anomaly_{i+1}.wav"
-
-    audio_int16 = np.int16(
-        np.clip(audio, -1, 1) * 32767
+    # Simulated anomaly: pulsed high-frequency tone
+    pulse = (np.sin(2 * np.pi * 10 * t) > 0).astype(float)
+    anomaly = (
+        0.03 * np.sin(2 * np.pi * 2500 * t) * pulse
+        + 0.01 * np.random.randn(SAMPLES)
     )
 
-    write(filename, SAMPLE_RATE, audio_int16)
+    for audio, folder, label in [
+        (normal, normal_folder, 0),
+        (anomaly, anomaly_folder, 1)
+    ]:
+        audio = np.clip(audio, -1, 1)
+        filename = os.path.join(folder, f"sample_{i}.wav")
 
-    features = extract_features(audio)
-    features["label"] = "anomalous"
+        write(filename, SAMPLE_RATE,
+              (audio * 32767).astype(np.int16))
 
-    dataset.append(features)
+        features = extract_features(audio)
+        features["label"] = label
+        dataset.append(features)
 
-
-# Save CSV
+# Save feature dataset
 df = pd.DataFrame(dataset)
+os.makedirs("data/processed", exist_ok=True)
+df.to_csv("data/processed/training_dataset.csv", index=False)
 
-output_path = Path("data/processed/training_dataset.csv")
-df.to_csv(output_path, index=False)
-
-print("\nDataset generated successfully!")
+print("Dataset generated successfully!")
 print("Total samples:", len(df))
-print("\nClass distribution:")
 print(df["label"].value_counts())
-print("\nDataset saved at:", output_path)
+print("Saved: data/processed/training_dataset.csv")
